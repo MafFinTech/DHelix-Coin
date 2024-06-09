@@ -1,0 +1,10 @@
+[package]
+name = "helixcoin"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+solana-program = "1.8.0"
+spl-token = "4.0.1"
+arrayref = "0.3"
+borsh = "1.5.1"
