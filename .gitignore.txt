@@ -1,0 +1,47 @@
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Microsoft Office
+~$*.docx
+~$*.xlsx
+~$*.pptx
+
+# User-specific files
+*.DS_Store
+*.localized
+.DS_Store?
+
+# GitHub
+.github/
+
+# Logs
+logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Directory-based files
+.sass-cache/
+.eslintcache
+node_modules/
+.npm/
+.yarn/
+
+# Web server files
+.htaccess
+.htpasswd
+
+# Editor directories and files
+.vscode/
+*.code-workspace
+
+# Local environment files
+.env
+.env.test

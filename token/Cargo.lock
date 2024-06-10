@@ -637,9 +637,11 @@ name = "helixcoin"
 version = "0.1.0"
 dependencies = [
  "arrayref",
- "borsh 1.5.1",
+ "borsh 0.9.3",
+ "log",
  "solana-program",
  "spl-token",
+ "thiserror",
 ]
 
 [[package]]
