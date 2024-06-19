@@ -15,23 +15,38 @@ use std::collections::HashMap;
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::sysvar;
 
-// Define the State struct
 #[derive(BorshSerialize, BorshDeserialize, Debug, Default, PartialEq)]
-pub struct State {
+pub struct ProposalsState {
     pub proposals: HashMap<u64, Vec<u8>>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug, Default, PartialEq)]
+pub struct VotesState {
     pub votes: HashMap<u64, Vec<(Pubkey, bool)>>,
-    pub halt: bool,
-    pub insurance_pool: u64,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug, Default, PartialEq)]
+pub struct BalancesState {
     pub balances: HashMap<Pubkey, u64>,
 }
 
-pub fn store_state(account: &AccountInfo, state: &State) -> Result<(), ProgramError> {
+#[derive(BorshSerialize, BorshDeserialize, Debug, Default, PartialEq)]
+pub struct SystemState {
+    pub halt: bool,
+    pub insurance_pool: u64,
+}
+
+pub fn store_proposals_state(account: &AccountInfo, state: &ProposalsState) -> Result<(), ProgramError> {
     let data = state.try_to_vec()?; // Serialize state to bytes
-    let mut data_ref = account.data.borrow_mut();
     let data_len = data.len();
     
-    msg!("Serialized state data length: {}", data_len);
-    msg!("Serialized state data: {:?}", &data[..data_len]);
+    // Check if the account data is large enough to hold the serialized state plus the length prefix
+    if account.data_len() < data_len + 8 {
+        msg!("Error: Account data is too small to hold the serialized proposals state");
+        return Err(ProgramError::AccountDataTooSmall);
+    }
+
+    let mut data_ref = account.data.borrow_mut();
     
     data_ref[..data_len].copy_from_slice(&data);
     
@@ -40,54 +55,158 @@ pub fn store_state(account: &AccountInfo, state: &State) -> Result<(), ProgramEr
     let data_ref_len = data_ref.len(); // Calculate length before mutable borrow
     data_ref[data_ref_len - 8..].copy_from_slice(&length_bytes);
     
-    msg!("Stored length bytes: {:?}", length_bytes);
-    msg!("Stored state data: {:?}", &data_ref[..data_len + 8]); // Logging the stored data for debugging
-    
     Ok(())
 }
 
-fn load_state(account: &AccountInfo) -> Result<State, ProgramError> {
+pub fn load_proposals_state(account: &AccountInfo) -> Result<ProposalsState, ProgramError> {
     let account_data = account.data.borrow();
-    msg!("Account data length: {}", account_data.len());
-
-    // Read the length of the serialized data from the end of the account data
     let data_len_position = account_data.len() - 8;
     let serialized_len_bytes = &account_data[data_len_position..];
-    msg!("Read length bytes: {:?}", serialized_len_bytes);
     
-    // Verify the length bytes are correctly read
     if serialized_len_bytes.iter().all(|&b| b == 0) {
         return Err(ProgramError::InvalidAccountData);
     }
     
     let serialized_len = usize::from_le_bytes(serialized_len_bytes.try_into().unwrap());
     
-    msg!("Serialized length: {}", serialized_len);
-    
-    // Ensure the serialized length is valid
     if serialized_len == 0 || serialized_len > data_len_position {
         return Err(ProgramError::InvalidAccountData);
     }
 
-    // Extract only the part of the account data that was actually used
     let serialized_state = &account_data[..serialized_len];
-    msg!("Serialized state data: {:?}", serialized_state);
-
-    let state_result = State::try_from_slice(serialized_state);
+    let state_result = ProposalsState::try_from_slice(serialized_state);
     
-    match state_result {
-        Ok(state) => {
-            msg!("Deserialized state successfully");
-            Ok(state)
-        }
-        Err(e) => {
-            msg!("Error deserializing state: {:?}", e);
-            Err(ProgramError::InvalidAccountData)
-        }
-    }
+    state_result.map_err(|_| ProgramError::InvalidAccountData)
 }
 
+pub fn store_votes_state(account: &AccountInfo, state: &VotesState) -> Result<(), ProgramError> {
+    let data = state.try_to_vec()?; // Serialize state to bytes
+    let data_len = data.len();
+    
+    // Check if the account data is large enough to hold the serialized state plus the length prefix
+    if account.data_len() < data_len + 8 {
+        msg!("Error: Account data is too small to hold the serialized votes state");
+        return Err(ProgramError::AccountDataTooSmall);
+    }
 
+    let mut data_ref = account.data.borrow_mut();
+    
+    data_ref[..data_len].copy_from_slice(&data);
+    
+    // Save the length of the serialized data at the end of the account data
+    let length_bytes = (data_len as u64).to_le_bytes();
+    let data_ref_len = data_ref.len(); // Calculate length before mutable borrow
+    data_ref[data_ref_len - 8..].copy_from_slice(&length_bytes);
+    
+    Ok(())
+}
+
+pub fn load_votes_state(account: &AccountInfo) -> Result<VotesState, ProgramError> {
+    let account_data = account.data.borrow();
+    let data_len_position = account_data.len() - 8;
+    let serialized_len_bytes = &account_data[data_len_position..];
+    
+    if serialized_len_bytes.iter().all(|&b| b == 0) {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    
+    let serialized_len = usize::from_le_bytes(serialized_len_bytes.try_into().unwrap());
+    
+    if serialized_len == 0 || serialized_len > data_len_position {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    let serialized_state = &account_data[..serialized_len];
+    let state_result = VotesState::try_from_slice(serialized_state);
+    
+    state_result.map_err(|_| ProgramError::InvalidAccountData)
+}
+
+pub fn store_balances_state(account: &AccountInfo, state: &BalancesState) -> Result<(), ProgramError> {
+    let data = state.try_to_vec()?; // Serialize state to bytes
+    let data_len = data.len();
+    
+    // Check if the account data is large enough to hold the serialized state plus the length prefix
+    if account.data_len() < data_len + 8 {
+        msg!("Error: Account data is too small to hold the serialized balances state");
+        return Err(ProgramError::AccountDataTooSmall);
+    }
+
+    let mut data_ref = account.data.borrow_mut();
+    
+    data_ref[..data_len].copy_from_slice(&data);
+    
+    // Save the length of the serialized data at the end of the account data
+    let length_bytes = (data_len as u64).to_le_bytes();
+    let data_ref_len = data_ref.len(); // Calculate length before mutable borrow
+    data_ref[data_ref_len - 8..].copy_from_slice(&length_bytes);
+    
+    Ok(())
+}
+
+pub fn load_balances_state(account: &AccountInfo) -> Result<BalancesState, ProgramError> {
+    let account_data = account.data.borrow();
+    let data_len_position = account_data.len() - 8;
+    let serialized_len_bytes = &account_data[data_len_position..];
+    
+    if serialized_len_bytes.iter().all(|&b| b == 0) {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    
+    let serialized_len = usize::from_le_bytes(serialized_len_bytes.try_into().unwrap());
+    
+    if serialized_len == 0 || serialized_len > data_len_position {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    let serialized_state = &account_data[..serialized_len];
+    let state_result = BalancesState::try_from_slice(serialized_state);
+    
+    state_result.map_err(|_| ProgramError::InvalidAccountData)
+}
+
+pub fn store_system_state(account: &AccountInfo, state: &SystemState) -> Result<(), ProgramError> {
+    let data = state.try_to_vec()?; // Serialize state to bytes
+    let data_len = data.len();
+    
+    // Check if the account data is large enough to hold the serialized state plus the length prefix
+    if account.data_len() < data_len + 8 {
+        msg!("Error: Account data is too small to hold the serialized system state");
+        return Err(ProgramError::AccountDataTooSmall);
+    }
+
+    let mut data_ref = account.data.borrow_mut();
+    
+    data_ref[..data_len].copy_from_slice(&data);
+    
+    // Save the length of the serialized data at the end of the account data
+    let length_bytes = (data_len as u64).to_le_bytes();
+    let data_ref_len = data_ref.len(); // Calculate length before mutable borrow
+    data_ref[data_ref_len - 8..].copy_from_slice(&length_bytes);
+    
+    Ok(())
+}
+
+pub fn load_system_state(account: &AccountInfo) -> Result<SystemState, ProgramError> {
+    let account_data = account.data.borrow();
+    let data_len_position = account_data.len() - 8;
+    let serialized_len_bytes = &account_data[data_len_position..];
+    
+    if serialized_len_bytes.iter().all(|&b| b == 0) {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    
+    let serialized_len = usize::from_le_bytes(serialized_len_bytes.try_into().unwrap());
+    
+    if serialized_len == 0 || serialized_len > data_len_position {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    let serialized_state = &account_data[..serialized_len];
+    let state_result = SystemState::try_from_slice(serialized_state);
+    
+    state_result.map_err(|_| ProgramError::InvalidAccountData)
+}
 
 #[derive(Debug)]
 pub enum DHelixError {
@@ -155,8 +274,6 @@ impl Pack for TokenAccount {
 }
 
 impl DHelixToken {
-    /// Mints a specified amount of tokens to the destination account.
-    /// Checks for overflow and ensures the mint account is a signer.
     pub fn mint(accounts: &[AccountInfo], amount: u64) -> ProgramResult {
         if accounts.len() < 3 {
             return Err(ProgramError::NotEnoughAccountKeys);
@@ -172,7 +289,6 @@ impl DHelixToken {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
-        // Ensure the mint account is authorized
         let mint_authority_pubkey = Pubkey::from_str("GSqP2u5zXbESXXxmLzJAs9cXpkbCSejyy5RSJsWVEADZ").unwrap();
         if mint_account.key != &mint_authority_pubkey {
             msg!("Error: Mint account is not authorized");
@@ -190,11 +306,12 @@ impl DHelixToken {
         TokenAccount::pack(destination_token_account, &mut destination_account.data.borrow_mut())?;
         msg!("Minted {} tokens to {}", amount, destination_account.key);
 
+        // Log event
+        msg!("Event: Mint {{ amount: {}, destination: {} }}", amount, destination_account.key);
+
         Ok(())
     }
 
-    /// Transfers a specified amount of tokens from the source account to the destination account.
-    /// Checks for underflow and overflow and ensures the source account is a signer.
     pub fn transfer(accounts: &[AccountInfo], amount: u64) -> ProgramResult {
         if accounts.len() < 3 {
             return Err(ProgramError::NotEnoughAccountKeys);
@@ -242,8 +359,6 @@ impl DHelixToken {
         Ok(())
     }
 
-    /// Burns a specified amount of tokens from the burn account.
-    /// Checks for underflow and ensures the burn account is a signer.
     pub fn burn(accounts: &[AccountInfo], amount: u64) -> ProgramResult {
         if accounts.len() < 2 {
             return Err(ProgramError::NotEnoughAccountKeys);
@@ -258,7 +373,6 @@ impl DHelixToken {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
-        // Ensure the burn account is authorized
         let burn_authority_pubkey = Pubkey::from_str("AxGavuYn6HHY95AjPyTaZHEpeKAgRJq4gAPJriC3iYP5").unwrap();
         if burn_account.key != &burn_authority_pubkey {
             msg!("Error: Burn account is not authorized");
@@ -291,7 +405,6 @@ impl DHelixToken {
         Ok(())
     }
 
-    /// Multisig functionality to ensure the correct number of signers and signatures.
     pub fn multisig(accounts: &[AccountInfo], required_signatures: u8) -> ProgramResult {
         if accounts.len() < 3 {
             return Err(ProgramError::NotEnoughAccountKeys);
@@ -331,7 +444,6 @@ impl DHelixToken {
         Ok(())
     }
 
-    /// Time-lock functionality to lock the account until a specific time.
     pub fn time_lock(accounts: &[AccountInfo], unlock_time: u64) -> ProgramResult {
         if accounts.len() < 3 {
             return Err(ProgramError::NotEnoughAccountKeys);
@@ -360,7 +472,6 @@ impl DHelixToken {
         Ok(())
     }
 
-    /// Emergency stop functionality to halt critical operations.
     pub fn emergency_stop(accounts: &[AccountInfo]) -> ProgramResult {
         if accounts.len() < 2 {
             msg!("Error: Not enough account keys");
@@ -369,17 +480,17 @@ impl DHelixToken {
     
         let account_info_iter = &mut accounts.iter();
         let emergency_stop_account = next_account_info(account_info_iter)?;
-        let state_account = next_account_info(account_info_iter)?;
+        let system_state_account = next_account_info(account_info_iter)?;
     
         if !emergency_stop_account.is_signer {
             msg!("Error: Emergency stop account must be a signer");
             return Err(ProgramError::MissingRequiredSignature);
         }
     
-        match load_state(state_account) {
+        match load_system_state(system_state_account) {
             Ok(mut state) => {
                 state.halt = true;
-                match store_state(state_account, &state) {
+                match store_system_state(system_state_account, &state) {
                     Ok(_) => {
                         msg!("Emergency stop operation successful");
                         // Log event
@@ -387,13 +498,13 @@ impl DHelixToken {
                         Ok(())
                     },
                     Err(e) => {
-                        msg!("Error storing state: {:?}", e);
+                        msg!("Error storing system state: {:?}", e);
                         Err(e)
                     }
                 }
             },
             Err(e) => {
-                msg!("Error loading state: {:?}", e);
+                msg!("Error loading system state: {:?}", e);
                 Err(e)
             }
         }
@@ -403,8 +514,6 @@ impl DHelixToken {
 pub struct DHelixDAO;
 
 impl DHelixDAO {
-    /// Submits a proposal with a specified ID and data.
-    /// Ensures the proposer account is a signer.
     pub fn submit_proposal(accounts: &[AccountInfo], proposal_id: u64, proposal_data: &[u8]) -> ProgramResult {
         if accounts.len() < 2 {
             msg!("Error: Not enough accounts");
@@ -413,30 +522,35 @@ impl DHelixDAO {
     
         let account_info_iter = &mut accounts.iter();
         let proposer_account = next_account_info(account_info_iter)?;
-        let state_account = next_account_info(account_info_iter)?;
+        let proposals_state_account = next_account_info(account_info_iter)?;
     
         if !proposer_account.is_signer {
             msg!("Error: Proposer account must be a signer");
             return Err(ProgramError::MissingRequiredSignature);
         }
     
-        msg!("Loading state...");
-        let mut state = match load_state(state_account) {
+        msg!("Loading proposals state...");
+        let mut state = match load_proposals_state(proposals_state_account) {
             Ok(state) => state,
             Err(e) => {
-                msg!("Error loading state: {:?}", e);
+                msg!("Error loading proposals state: {:?}", e);
                 return Err(e);
             }
         };
     
+        if state.proposals.contains_key(&proposal_id) {
+            msg!("Error: Proposal ID already exists");
+            return Err(ProgramError::InvalidArgument);
+        }
+    
         msg!("Inserting proposal ID: {}", proposal_id);
         state.proposals.insert(proposal_id, proposal_data.to_vec());
     
-        msg!("Storing state...");
-        match store_state(state_account, &state) {
-            Ok(_) => msg!("State stored successfully"),
+        msg!("Storing proposals state...");
+        match store_proposals_state(proposals_state_account, &state) {
+            Ok(_) => msg!("Proposals state stored successfully"),
             Err(e) => {
-                msg!("Error storing state: {:?}", e);
+                msg!("Error storing proposals state: {:?}", e);
                 return Err(e);
             }
         };
@@ -449,8 +563,6 @@ impl DHelixDAO {
         Ok(())
     }
 
-    /// Votes on a proposal with a specified ID and vote value.
-    /// Ensures the voter account is a signer.
     pub fn vote(accounts: &[AccountInfo], proposal_id: u64, vote: bool) -> ProgramResult {
         if accounts.len() < 2 {
             return Err(ProgramError::NotEnoughAccountKeys);
@@ -458,16 +570,16 @@ impl DHelixDAO {
 
         let account_info_iter = &mut accounts.iter();
         let voter_account = next_account_info(account_info_iter)?;
-        let state_account = next_account_info(account_info_iter)?;
+        let votes_state_account = next_account_info(account_info_iter)?;
 
         if !voter_account.is_signer {
             msg!("Error: Voter account must be a signer");
             return Err(ProgramError::MissingRequiredSignature);
         }
 
-        let mut state = load_state(state_account)?;
+        let mut state = load_votes_state(votes_state_account)?;
         state.votes.entry(proposal_id).or_default().push((*voter_account.key, vote));
-        store_state(state_account, &state)?;
+        store_votes_state(votes_state_account, &state)?;
 
         msg!("Voting on proposal ID: {} by {}", proposal_id, voter_account.key);
 
@@ -477,8 +589,6 @@ impl DHelixDAO {
         Ok(())
     }
 
-    /// Executes a proposal with a specified ID.
-    /// Ensures the executor account is a signer.
     pub fn execute_proposal(accounts: &[AccountInfo], proposal_id: u64) -> ProgramResult {
         if accounts.len() < 2 {
             return Err(ProgramError::NotEnoughAccountKeys);
@@ -486,14 +596,14 @@ impl DHelixDAO {
     
         let account_info_iter = &mut accounts.iter();
         let executor_account = next_account_info(account_info_iter)?;
-        let state_account = next_account_info(account_info_iter)?;
+        let proposals_state_account = next_account_info(account_info_iter)?;
     
         if !executor_account.is_signer {
             msg!("Error: Executor account must be a signer");
             return Err(ProgramError::MissingRequiredSignature);
         }
     
-        let mut state = load_state(state_account)?;
+        let mut state = load_proposals_state(proposals_state_account)?;
         if let Some(data) = state.proposals.get(&proposal_id) {
             // Implement the logic to execute the proposal using the data
             msg!("Executing proposal ID: {}, Data: {:?}", proposal_id, data);
@@ -501,7 +611,10 @@ impl DHelixDAO {
             
             // Remove the proposal from state after execution
             state.proposals.remove(&proposal_id);
-            store_state(state_account, &state)?;
+            store_proposals_state(proposals_state_account, &state)?;
+    
+            // Log event
+            msg!("Event: ProposalExecuted {{ proposal_id: {}, executor: {} }}", proposal_id, executor_account.key);
     
             Ok(())
         } else {
@@ -509,8 +622,6 @@ impl DHelixDAO {
         }
     }
 
-    /// Charity vote functionality.
-    /// Ensures the voter account is a signer.
     pub fn charity_vote(accounts: &[AccountInfo], proposal_id: u64, vote: bool) -> ProgramResult {
         if accounts.len() < 2 {
             return Err(ProgramError::NotEnoughAccountKeys);
@@ -518,16 +629,16 @@ impl DHelixDAO {
     
         let account_info_iter = &mut accounts.iter();
         let voter_account = next_account_info(account_info_iter)?;
-        let state_account = next_account_info(account_info_iter)?;
+        let votes_state_account = next_account_info(account_info_iter)?;
     
         if !voter_account.is_signer {
             msg!("Error: Voter account must be a signer");
             return Err(ProgramError::MissingRequiredSignature);
         }
     
-        let mut state = load_state(state_account)?;
+        let mut state = load_votes_state(votes_state_account)?;
         state.votes.entry(proposal_id).or_default().push((*voter_account.key, vote));
-        store_state(state_account, &state)?;
+        store_votes_state(votes_state_account, &state)?;
     
         msg!("Charity vote on proposal ID: {} by {}", proposal_id, voter_account.key);
     
@@ -537,8 +648,6 @@ impl DHelixDAO {
         Ok(())
     }
 
-    /// Future project vote functionality.
-    /// Ensures the voter account is a signer.
     pub fn future_project_vote(accounts: &[AccountInfo], proposal_id: u64, vote: bool) -> ProgramResult {
         if accounts.len() < 2 {
             return Err(ProgramError::NotEnoughAccountKeys);
@@ -546,16 +655,16 @@ impl DHelixDAO {
 
         let account_info_iter = &mut accounts.iter();
         let voter_account = next_account_info(account_info_iter)?;
-        let state_account = next_account_info(account_info_iter)?;
+        let votes_state_account = next_account_info(account_info_iter)?;
 
         if !voter_account.is_signer {
             msg!("Error: Voter account must be a signer");
             return Err(ProgramError::MissingRequiredSignature);
         }
 
-        let mut state = load_state(state_account)?;
+        let mut state = load_votes_state(votes_state_account)?;
         state.votes.entry(proposal_id).or_default().push((*voter_account.key, vote));
-        store_state(state_account, &state)?;
+        store_votes_state(votes_state_account, &state)?;
 
         msg!("Future project vote on proposal ID: {} by {}", proposal_id, voter_account.key);
 
@@ -567,33 +676,30 @@ impl DHelixDAO {
 }
 
 impl DHelixToken {
-    /// Incentivized voting system functionality.
-    /// Ensures the voter account is a signer.
     pub fn incentivized_voting_system(accounts: &[AccountInfo], proposal_id: u64, vote: bool) -> ProgramResult {
-        if accounts.len() < 2 {
+        if accounts.len() < 3 {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
     
         let account_info_iter = &mut accounts.iter();
         let voter_account = next_account_info(account_info_iter)?;
-        let state_account = next_account_info(account_info_iter)?;
+        let votes_state_account = next_account_info(account_info_iter)?;
+        let balances_state_account = next_account_info(account_info_iter)?;
     
         if !voter_account.is_signer {
             msg!("Error: Voter account must be a signer");
             return Err(ProgramError::MissingRequiredSignature);
         }
     
-        let mut state = load_state(state_account)?;
-        
-        // Record the vote
-        state.votes.entry(proposal_id).or_default().push((*voter_account.key, vote));
+        let mut votes_state = load_votes_state(votes_state_account)?;
+        votes_state.votes.entry(proposal_id).or_default().push((*voter_account.key, vote));
+        store_votes_state(votes_state_account, &votes_state)?;
     
-        // Reward the voter
+        let mut balances_state = load_balances_state(balances_state_account)?;
         let reward_amount = 10; // Example reward amount
-        let balance = state.balances.entry(*voter_account.key).or_insert(0);
+        let balance = balances_state.balances.entry(*voter_account.key).or_insert(0);
         *balance += reward_amount;
-    
-        store_state(state_account, &state)?;
+        store_balances_state(balances_state_account, &balances_state)?;
     
         msg!("Incentivized voting on proposal ID: {} by {}", proposal_id, voter_account.key);
     
@@ -603,8 +709,6 @@ impl DHelixToken {
         Ok(())
     }
 
-    /// Dynamic staking rewards functionality.
-    /// Ensures the staker account is a signer.
     pub fn dynamic_staking_rewards(accounts: &[AccountInfo], staking_duration: u64) -> ProgramResult {
         if accounts.len() < 2 {
             return Err(ProgramError::NotEnoughAccountKeys);
@@ -612,19 +716,19 @@ impl DHelixToken {
 
         let account_info_iter = &mut accounts.iter();
         let staker_account = next_account_info(account_info_iter)?;
-        let state_account = next_account_info(account_info_iter)?;
+        let balances_state_account = next_account_info(account_info_iter)?;
 
         if !staker_account.is_signer {
             msg!("Error: Staker account must be a signer");
             return Err(ProgramError::MissingRequiredSignature);
         }
 
-        let mut state = load_state(state_account)?;
+        let mut balances_state = load_balances_state(balances_state_account)?;
         let reward_rate = 5; // Example reward rate per duration unit
         let reward_amount = staking_duration * reward_rate;
-        let balance = state.balances.entry(*staker_account.key).or_insert(0);
+        let balance = balances_state.balances.entry(*staker_account.key).or_insert(0);
         *balance += reward_amount;
-        store_state(state_account, &state)?;
+        store_balances_state(balances_state_account, &balances_state)?;
 
         msg!("Calculating staking rewards for {} by staking duration {}", staker_account.key, staking_duration);
 
@@ -634,8 +738,6 @@ impl DHelixToken {
         Ok(())
     }
 
-    /// Token buyback program functionality.
-    /// Ensures the buyback account is a signer.
     pub fn token_buyback_program(accounts: &[AccountInfo], amount: u64) -> ProgramResult {
         if accounts.len() < 2 {
             return Err(ProgramError::NotEnoughAccountKeys);
@@ -643,20 +745,20 @@ impl DHelixToken {
 
         let account_info_iter = &mut accounts.iter();
         let buyback_account = next_account_info(account_info_iter)?;
-        let state_account = next_account_info(account_info_iter)?;
+        let balances_state_account = next_account_info(account_info_iter)?;
 
         if !buyback_account.is_signer {
             msg!("Error: Buyback account must be a signer");
             return Err(ProgramError::MissingRequiredSignature);
         }
 
-        let mut state = load_state(state_account)?;
-        let balance = state.balances.entry(*buyback_account.key).or_insert(0);
+        let mut balances_state = load_balances_state(balances_state_account)?;
+        let balance = balances_state.balances.entry(*buyback_account.key).or_insert(0);
         if *balance < amount {
             return Err(ProgramError::InsufficientFunds);
         }
         *balance -= amount;
-        store_state(state_account, &state)?;
+        store_balances_state(balances_state_account, &balances_state)?;
 
         msg!("Executing token buyback for {} tokens", amount);
 
@@ -666,30 +768,32 @@ impl DHelixToken {
         Ok(())
     }
 
-    /// Insurance pool functionality.
-    /// Ensures the insurance account is a signer.
     pub fn insurance_pool(accounts: &[AccountInfo], amount: u64) -> ProgramResult {
-        if accounts.len() < 2 {
+        if accounts.len() < 3 {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
         let account_info_iter = &mut accounts.iter();
         let insurance_account = next_account_info(account_info_iter)?;
-        let state_account = next_account_info(account_info_iter)?;
+        let system_state_account = next_account_info(account_info_iter)?;
+        let balances_state_account = next_account_info(account_info_iter)?;
 
         if !insurance_account.is_signer {
             msg!("Error: Insurance account must be a signer");
             return Err(ProgramError::MissingRequiredSignature);
         }
 
-        let mut state = load_state(state_account)?;
-        let balance = state.balances.entry(*insurance_account.key).or_insert(0);
+        let mut balances_state = load_balances_state(balances_state_account)?;
+        let balance = balances_state.balances.entry(*insurance_account.key).or_insert(0);
         if *balance < amount {
             return Err(ProgramError::InsufficientFunds);
         }
         *balance -= amount;
-        state.insurance_pool += amount;
-        store_state(state_account, &state)?;
+        store_balances_state(balances_state_account, &balances_state)?;
+
+        let mut system_state = load_system_state(system_state_account)?;
+        system_state.insurance_pool += amount;
+        store_system_state(system_state_account, &system_state)?;
 
         msg!("Contributing {} to the insurance pool", amount);
 
@@ -842,13 +946,7 @@ mod tests {
         owner: &'a Pubkey,
     ) -> AccountInfo<'a> {
         // Initialize account data with a serialized empty state
-        let state = State {
-            proposals: HashMap::new(),
-            votes: HashMap::new(),
-            halt: false,
-            insurance_pool: 0,
-            balances: HashMap::new(),
-        };
+        let state = ProposalsState::default();
         let serialized_state = state.try_to_vec().unwrap();
         let serialized_state_len = serialized_state.len();
         data[..serialized_state_len].copy_from_slice(&serialized_state);
@@ -859,7 +957,6 @@ mod tests {
     
         AccountInfo::new(key, false, true, lamports, data, owner, false, 0)
     }
-    
     
     #[test]
     fn test_mint() {
@@ -900,7 +997,8 @@ mod tests {
         assert!(result.is_err());
     
         // Test without signer
-        
+        let result = DHelixToken::mint(&[destination_account.clone(), state_account.clone()], amount);
+        assert!(result.is_err());
     }
     
     #[test]
@@ -949,7 +1047,8 @@ mod tests {
         assert!(result.is_err());
     
         // Test without signer
-        
+        let result = DHelixToken::transfer(&[accounts[1].clone(), accounts[1].clone(), accounts[2].clone()], amount);
+        assert!(result.is_err());
     }
     
     #[test]
@@ -987,7 +1086,8 @@ mod tests {
         assert!(result.is_err());
     
         // Test without signer
-        
+        let result = DHelixToken::burn(&[accounts[1].clone(), accounts[1].clone()], amount);
+        assert!(result.is_err());
     }
     
     #[test]
@@ -1088,21 +1188,36 @@ mod tests {
         let mut emergency_stop_account_lamports = 300;
         let mut state_account_lamports = 100;
         let mut emergency_stop_account_data = vec![0; 100];
-        let mut state_account_data = vec![0; 1024]; // Ensure this size is enough for the serialized state
+        let mut system_state_account_data = vec![0; 1032]; // Ensure this size is enough for the serialized state + length
         let emergency_stop_key = Pubkey::new_unique();
-        let state_key = Pubkey::new_unique();
+        let system_state_key = Pubkey::new_unique();
     
         let emergency_stop_account = create_account_info(
             &emergency_stop_key, true, true, &mut emergency_stop_account_lamports, &mut emergency_stop_account_data, &program_id);
-        let state_account = initialize_state_account(
-            &state_key, &mut state_account_lamports, &mut state_account_data, &program_id);
-        let accounts = vec![emergency_stop_account.clone(), state_account];
+        
+        // Initialize system_state_account with a default SystemState
+        let system_state = SystemState {
+            halt: false,
+            insurance_pool: 0,
+        };
+        let serialized_state = system_state.try_to_vec().unwrap();
+        let serialized_state_len = serialized_state.len();
+        system_state_account_data[..serialized_state_len].copy_from_slice(&serialized_state);
+        
+        let data_len = system_state_account_data.len(); // Store length in a local variable
+        let length_bytes = (serialized_state_len as u64).to_le_bytes();
+        system_state_account_data[data_len - 8..].copy_from_slice(&length_bytes);
+    
+        let system_state_account = AccountInfo::new(
+            &system_state_key, false, true, &mut state_account_lamports, &mut system_state_account_data, &program_id, false, 0);
+    
+        let accounts = vec![emergency_stop_account.clone(), system_state_account];
     
         let result = DHelixToken::emergency_stop(&accounts);
         assert!(result.is_ok(), "Emergency stop operation failed: {:?}", result);
     
         // Verify halt state
-        let state = load_state(&accounts[1]).unwrap();
+        let state = load_system_state(&accounts[1]).unwrap();
         assert!(state.halt, "Halt state was not set correctly");
     }
     
@@ -1112,16 +1227,16 @@ mod tests {
         let mut proposer_account_lamports = 300;
         let mut state_account_lamports = 100;
         let mut proposer_account_data = vec![0; 100];
-        let mut state_account_data = vec![0; 1032]; // Adjust size to include space for length (1024 + 8 bytes)
+        let mut proposals_state_account_data = vec![0; 1032]; // Adjust size to include space for length (1024 + 8 bytes)
         let proposer_key = Pubkey::new_unique();
-        let state_key = Pubkey::new_unique();
+        let proposals_state_key = Pubkey::new_unique();
     
         let proposer_account = create_account_info(&proposer_key, true, true, &mut proposer_account_lamports, &mut proposer_account_data, &program_id);
-        let state_account = initialize_state_account(&state_key, &mut state_account_lamports, &mut state_account_data, &program_id);
-        let accounts = vec![proposer_account.clone(), state_account.clone()];
+        let proposals_state_account = initialize_state_account(&proposals_state_key, &mut state_account_lamports, &mut proposals_state_account_data, &program_id);
+        let accounts = vec![proposer_account.clone(), proposals_state_account.clone()];
     
         // Logging for initialization
-        msg!("Initialized state account with key: {}", state_key);
+        msg!("Initialized proposals state account with key: {}", proposals_state_key);
         
         let proposal_id = 1;
         let proposal_data = b"Future Project Proposal";
@@ -1129,7 +1244,7 @@ mod tests {
         let result = DHelixDAO::submit_proposal(&accounts, proposal_id, proposal_data);
         assert!(result.is_ok(), "Submit proposal failed: {:?}", result);
     
-        let state = load_state(&accounts[1]).unwrap();
+        let state = load_proposals_state(&accounts[1]).unwrap();
         assert!(state.proposals.contains_key(&proposal_id), "Proposal not found in state");
         assert_eq!(state.proposals[&proposal_id], proposal_data.to_vec(), "Proposal data mismatch");
     }
@@ -1140,13 +1255,13 @@ mod tests {
         let mut voter_account_lamports = 300;
         let mut state_account_lamports = 100;
         let mut voter_account_data = vec![0; 100];
-        let mut state_account_data = vec![0; 1024]; // Adjust size as necessary
+        let mut votes_state_account_data = vec![0; 1024]; // Adjust size as necessary
         let voter_key = Pubkey::new_unique();
-        let state_key = Pubkey::new_unique();
+        let votes_state_key = Pubkey::new_unique();
     
         let voter_account = create_account_info(&voter_key, true, true, &mut voter_account_lamports, &mut voter_account_data, &program_id);
-        let state_account = initialize_state_account(&state_key, &mut state_account_lamports, &mut state_account_data, &program_id);
-        let accounts = vec![voter_account.clone(), state_account.clone()];
+        let votes_state_account = initialize_state_account(&votes_state_key, &mut state_account_lamports, &mut votes_state_account_data, &program_id);
+        let accounts = vec![voter_account.clone(), votes_state_account.clone()];
     
         let proposal_id = 1;
         let vote = true;
@@ -1154,7 +1269,7 @@ mod tests {
         let result = DHelixDAO::vote(&accounts, proposal_id, vote);
         assert!(result.is_ok(), "Vote failed: {:?}", result);
     
-        let state = load_state(&accounts[1]).unwrap();
+        let state = load_votes_state(&accounts[1]).unwrap();
         assert!(state.votes.contains_key(&proposal_id), "Vote not found in state");
         assert!(state.votes[&proposal_id].iter().any(|&(ref pk, v)| pk == &voter_key && v == vote), "Vote data mismatch");
     }
@@ -1165,26 +1280,26 @@ mod tests {
         let mut executor_account_lamports = 300;
         let mut state_account_lamports = 100;
         let mut executor_account_data = vec![0; 100];
-        let mut state_account_data = vec![0; 1032]; // Adjust size as necessary
+        let mut proposals_state_account_data = vec![0; 1032]; // Adjust size as necessary
         let executor_key = Pubkey::new_unique();
-        let state_key = Pubkey::new_unique();
+        let proposals_state_key = Pubkey::new_unique();
     
         let executor_account = create_account_info(&executor_key, true, true, &mut executor_account_lamports, &mut executor_account_data, &program_id);
-        let state_account = initialize_state_account(&state_key, &mut state_account_lamports, &mut state_account_data, &program_id);
-        let accounts = vec![executor_account.clone(), state_account.clone()];
+        let proposals_state_account = initialize_state_account(&proposals_state_key, &mut state_account_lamports, &mut proposals_state_account_data, &program_id);
+        let accounts = vec![executor_account.clone(), proposals_state_account.clone()];
     
         let proposal_id = 1;
         let proposal_data = b"Proposal to be executed";
-        let mut state = load_state(&accounts[1]).unwrap();
+        let mut state = load_proposals_state(&accounts[1]).unwrap();
         state.proposals.insert(proposal_id, proposal_data.to_vec());
-        store_state(&accounts[1], &state).unwrap();
+        store_proposals_state(&accounts[1], &state).unwrap();
     
         let result = DHelixDAO::execute_proposal(&accounts, proposal_id);
         assert!(result.is_ok(), "Execute proposal failed: {:?}", result);
     
         // Check if proposal execution logic was implemented correctly
         // This example assumes proposal execution would remove the proposal from state
-        let state = load_state(&accounts[1]).unwrap();
+        let state = load_proposals_state(&accounts[1]).unwrap();
         assert!(!state.proposals.contains_key(&proposal_id), "Proposal was not executed properly");
     }
     
@@ -1194,23 +1309,19 @@ mod tests {
         let mut voter_account_lamports = 300;
         let mut state_account_lamports = 100;
         let mut voter_account_data = vec![0; 100];
-        let mut state_account_data = vec![0; 1024]; // Adjust size as necessary
+        let mut votes_state_account_data = vec![0; 1024]; // Adjust size as necessary
         let voter_key = Pubkey::new_unique();
-        let state_key = Pubkey::new_unique();
+        let votes_state_key = Pubkey::new_unique();
     
         let voter_account = create_account_info(&voter_key, true, true, &mut voter_account_lamports, &mut voter_account_data, &program_id);
-        let state_account = initialize_state_account(&state_key, &mut state_account_lamports, &mut state_account_data, &program_id);
-        let accounts = vec![voter_account.clone(), state_account.clone()];
+        let votes_state_account = initialize_state_account(&votes_state_key, &mut state_account_lamports, &mut votes_state_account_data, &program_id);
+        let accounts = vec![voter_account.clone(), votes_state_account.clone()];
     
         // Initialize state with some data
-        let initial_state = State {
-            proposals: HashMap::new(),
+        let initial_state = VotesState {
             votes: HashMap::new(),
-            halt: false,
-            insurance_pool: 0,
-            balances: HashMap::new(),
         };
-        store_state(&state_account, &initial_state).unwrap();
+        store_votes_state(&votes_state_account, &initial_state).unwrap();
     
         let proposal_id = 1;
         let vote = true;
@@ -1218,7 +1329,7 @@ mod tests {
         let result = DHelixDAO::charity_vote(&accounts, proposal_id, vote);
         assert!(result.is_ok(), "Charity vote failed: {:?}", result);
     
-        let state = load_state(&accounts[1]).unwrap();
+        let state = load_votes_state(&accounts[1]).unwrap();
         assert!(state.votes.contains_key(&proposal_id), "Charity vote not found in state");
         assert!(state.votes[&proposal_id].iter().any(|&(ref pk, v)| pk == &voter_key && v == vote), "Charity vote data mismatch");
     }
@@ -1229,13 +1340,13 @@ mod tests {
         let mut voter_account_lamports = 300;
         let mut state_account_lamports = 100;
         let mut voter_account_data = vec![0; 100];
-        let mut state_account_data = vec![0; 1024]; // Adjust size as necessary
+        let mut votes_state_account_data = vec![0; 1024]; // Adjust size as necessary
         let voter_key = Pubkey::new_unique();
-        let state_key = Pubkey::new_unique();
+        let votes_state_key = Pubkey::new_unique();
     
         let voter_account = create_account_info(&voter_key, true, true, &mut voter_account_lamports, &mut voter_account_data, &program_id);
-        let state_account = initialize_state_account(&state_key, &mut state_account_lamports, &mut state_account_data, &program_id);
-        let accounts = vec![voter_account.clone(), state_account.clone()];
+        let votes_state_account = initialize_state_account(&votes_state_key, &mut state_account_lamports, &mut votes_state_account_data, &program_id);
+        let accounts = vec![voter_account.clone(), votes_state_account.clone()];
     
         let proposal_id = 1;
         let vote = true;
@@ -1243,7 +1354,7 @@ mod tests {
         let result = DHelixDAO::future_project_vote(&accounts, proposal_id, vote);
         assert!(result.is_ok(), "Future project vote failed: {:?}", result);
     
-        let state = load_state(&accounts[1]).unwrap();
+        let state = load_votes_state(&accounts[1]).unwrap();
         assert!(state.votes.contains_key(&proposal_id), "Future project vote not found in state");
         assert!(state.votes[&proposal_id].iter().any(|&(ref pk, v)| pk == &voter_key && v == vote), "Future project vote data mismatch");
     }
@@ -1252,50 +1363,58 @@ mod tests {
     fn test_incentivized_voting_system() {
         let program_id = Pubkey::new_unique();
         let mut voter_account_lamports = 300;
-        let mut state_account_lamports = 100;
+        let mut votes_state_account_lamports = 100;
+        let mut balances_state_account_lamports = 100;
         let mut voter_account_data = vec![0; 100];
-        let mut state_account_data = vec![0; 1024]; // Adjust size as necessary
+        let mut votes_state_account_data = vec![0; 1024]; // Adjust size as necessary
+        let mut balances_state_account_data = vec![0; 1024]; // Adjust size as necessary
         let voter_key = Pubkey::new_unique();
-        let state_key = Pubkey::new_unique();
+        let votes_state_key = Pubkey::new_unique();
+        let balances_state_key = Pubkey::new_unique();
     
         let voter_account = create_account_info(&voter_key, true, true, &mut voter_account_lamports, &mut voter_account_data, &program_id);
-        let state_account = initialize_state_account(&state_key, &mut state_account_lamports, &mut state_account_data, &program_id);
-        let accounts = vec![voter_account.clone(), state_account.clone()];
+        let votes_state_account = initialize_state_account(&votes_state_key, &mut votes_state_account_lamports, &mut votes_state_account_data, &program_id);
+        let balances_state_account = initialize_state_account(&balances_state_key, &mut balances_state_account_lamports, &mut balances_state_account_data, &program_id);
     
         let proposal_id = 1;
         let vote = true;
     
-        let result = DHelixToken::incentivized_voting_system(&accounts, proposal_id, vote);
-        assert!(result.is_ok(), "Incentivized voting system failed: {:?}", result);
+        {
+            let accounts = vec![voter_account.clone(), votes_state_account.clone(), balances_state_account.clone()];
     
-        let state = load_state(&accounts[1]).unwrap();
-        let balance = state.balances.get(&voter_key).copied().unwrap_or(0);
-        assert_eq!(balance, 10, "Reward amount mismatch");
-        assert!(state.votes.contains_key(&proposal_id), "Incentivized vote not found in state");
-        assert!(state.votes[&proposal_id].iter().any(|&(ref pk, v)| pk == &voter_key && v == vote), "Incentivized vote data mismatch");
+            let result = DHelixToken::incentivized_voting_system(&accounts, proposal_id, vote);
+            assert!(result.is_ok(), "Incentivized voting system failed: {:?}", result);
+        }
+    
+        {
+            let state = load_votes_state(&votes_state_account).unwrap();
+            let balance = load_balances_state(&balances_state_account).unwrap().balances.get(&voter_key).copied().unwrap_or(0);
+            assert_eq!(balance, 10, "Reward amount mismatch");
+            assert!(state.votes.contains_key(&proposal_id), "Incentivized vote not found in state");
+            assert!(state.votes[&proposal_id].iter().any(|&(ref pk, v)| pk == &voter_key && v == vote), "Incentivized vote data mismatch");
+        }
     }
     
     #[test]
     fn test_dynamic_staking_rewards() {
         let program_id = Pubkey::new_unique();
         let mut staker_account_lamports = 300;
-        let mut state_account_lamports = 100;
+        let mut balances_state_account_lamports = 100;
         let mut staker_account_data = vec![0; 100];
-        let mut state_account_data = vec![0; 1024]; // Adjust size as necessary
+        let mut balances_state_account_data = vec![0; 1024]; // Adjust size as necessary
         let staker_key = Pubkey::new_unique();
-        let state_key = Pubkey::new_unique();
+        let balances_state_key = Pubkey::new_unique();
     
         let staker_account = create_account_info(&staker_key, true, true, &mut staker_account_lamports, &mut staker_account_data, &program_id);
-        let state_account = initialize_state_account(&state_key, &mut state_account_lamports, &mut state_account_data, &program_id);
-        let accounts = vec![staker_account.clone(), state_account.clone()];
+        let balances_state_account = initialize_state_account(&balances_state_key, &mut balances_state_account_lamports, &mut balances_state_account_data, &program_id);
+        let accounts = vec![staker_account.clone(), balances_state_account.clone()];
     
         let staking_duration = 100;
     
         let result = DHelixToken::dynamic_staking_rewards(&accounts, staking_duration);
         assert!(result.is_ok(), "Dynamic staking rewards failed: {:?}", result);
     
-        let state = load_state(&accounts[1]).unwrap();
-        let balance = state.balances.get(&staker_key).copied().unwrap_or(0);
+        let balance = load_balances_state(&accounts[1]).unwrap().balances.get(&staker_key).copied().unwrap_or(0);
         assert_eq!(balance, staking_duration * 5, "Staking reward amount mismatch");
     }
     
@@ -1303,27 +1422,26 @@ mod tests {
     fn test_token_buyback_program() {
         let program_id = Pubkey::new_unique();
         let mut buyback_account_lamports = 300;
-        let mut state_account_lamports = 100;
+        let mut balances_state_account_lamports = 100;
         let mut buyback_account_data = vec![0; 100];
-        let mut state_account_data = vec![0; 1024]; // Adjust size as necessary
+        let mut balances_state_account_data = vec![0; 1024]; // Adjust size as necessary
         let buyback_key = Pubkey::new_unique();
-        let state_key = Pubkey::new_unique();
+        let balances_state_key = Pubkey::new_unique();
     
         let buyback_account = create_account_info(&buyback_key, true, true, &mut buyback_account_lamports, &mut buyback_account_data, &program_id);
-        let state_account = initialize_state_account(&state_key, &mut state_account_lamports, &mut state_account_data, &program_id);
-        let accounts = vec![buyback_account.clone(), state_account.clone()];
+        let balances_state_account = initialize_state_account(&balances_state_key, &mut balances_state_account_lamports, &mut balances_state_account_data, &program_id);
+        let accounts = vec![buyback_account.clone(), balances_state_account.clone()];
     
         // Initialize buyback account balance
-        let mut state = load_state(&accounts[1]).unwrap();
+        let mut state = load_balances_state(&accounts[1]).unwrap();
         state.balances.insert(buyback_key, 100);
-        store_state(&accounts[1], &state).unwrap();
+        store_balances_state(&accounts[1], &state).unwrap();
     
         let amount = 50;
         let result = DHelixToken::token_buyback_program(&accounts, amount);
         assert!(result.is_ok(), "Token buyback program failed: {:?}", result);
     
-        let state = load_state(&accounts[1]).unwrap();
-        let balance = state.balances.get(&buyback_key).copied().unwrap_or(0);
+        let balance = load_balances_state(&accounts[1]).unwrap().balances.get(&buyback_key).copied().unwrap_or(0);
         assert_eq!(balance, 50, "Buyback balance mismatch");
     }
     
@@ -1331,72 +1449,82 @@ mod tests {
     fn test_insurance_pool() {
         let program_id = Pubkey::new_unique();
         let mut insurance_account_lamports = 300;
-        let mut state_account_lamports = 100;
+        let mut balances_state_account_lamports = 100;
+        let mut system_state_account_lamports = 100;
         let mut insurance_account_data = vec![0; 100];
-        let mut state_account_data = vec![0; 1024]; // Adjust size as necessary
+        let mut balances_state_account_data = vec![0; 1024]; // Adjust size as necessary
+        let mut system_state_account_data = vec![0; 1032]; // Adjust size as necessary to include length prefix
         let insurance_key = Pubkey::new_unique();
-        let state_key = Pubkey::new_unique();
+        let balances_state_key = Pubkey::new_unique();
+        let system_state_key = Pubkey::new_unique();
     
         let insurance_account = create_account_info(&insurance_key, true, true, &mut insurance_account_lamports, &mut insurance_account_data, &program_id);
-        let state_account = initialize_state_account(&state_key, &mut state_account_lamports, &mut state_account_data, &program_id);
-        let accounts = vec![insurance_account.clone(), state_account.clone()];
+        let balances_state_account = initialize_state_account(&balances_state_key, &mut balances_state_account_lamports, &mut balances_state_account_data, &program_id);
+    
+        // Initialize system_state_account with a default SystemState
+        let system_state = SystemState {
+            halt: false,
+            insurance_pool: 0,
+        };
+        let serialized_state = system_state.try_to_vec().unwrap();
+        let serialized_state_len = serialized_state.len();
+        system_state_account_data[..serialized_state_len].copy_from_slice(&serialized_state);
+        
+        let data_len = system_state_account_data.len(); // Store length in a local variable
+        let length_bytes = (serialized_state_len as u64).to_le_bytes();
+        system_state_account_data[data_len - 8..].copy_from_slice(&length_bytes);
+    
+        let system_state_account = AccountInfo::new(
+            &system_state_key, false, true, &mut system_state_account_lamports, &mut system_state_account_data, &program_id, false, 0);
+    
+        let accounts = vec![insurance_account.clone(), system_state_account.clone(), balances_state_account.clone()];
     
         // Initialize insurance account balance
-        let mut state = load_state(&accounts[1]).unwrap();
-        state.balances.insert(insurance_key, 100);
-        store_state(&accounts[1], &state).unwrap();
+        let mut balances_state = load_balances_state(&accounts[2]).unwrap();
+        balances_state.balances.insert(insurance_key, 100);
+        store_balances_state(&accounts[2], &balances_state).unwrap();
     
         let amount = 50;
         let result = DHelixToken::insurance_pool(&accounts, amount);
         assert!(result.is_ok(), "Insurance pool contribution failed: {:?}", result);
     
-        let state = load_state(&accounts[1]).unwrap();
-        let balance = state.balances.get(&insurance_key).copied().unwrap_or(0);
+        let balances_state = load_balances_state(&accounts[2]).unwrap();
+        let balance = balances_state.balances.get(&insurance_key).copied().unwrap_or(0);
         assert_eq!(balance, 50, "Insurance balance mismatch");
-        assert_eq!(state.insurance_pool, amount, "Insurance pool amount mismatch");
+    
+        let system_state = load_system_state(&accounts[1]).unwrap();
+        assert_eq!(system_state.insurance_pool, amount, "Insurance pool amount mismatch");
     }
     
     #[test]
     fn test_serialize_state() {
-        let state = State {
+        let state = ProposalsState {
             proposals: HashMap::new(),
-            votes: HashMap::new(),
-            halt: false,
-            insurance_pool: 0,
-            balances: HashMap::new(),
         };
         let serialized_state = state.try_to_vec().unwrap();
-        let deserialized_state: State = State::try_from_slice(&serialized_state).unwrap();
+        let deserialized_state: ProposalsState = ProposalsState::try_from_slice(&serialized_state).unwrap();
         assert_eq!(state, deserialized_state, "State serialization/deserialization mismatch");
     }
     
     #[test]
     fn test_store_load_state() {
         let program_id = Pubkey::new_unique();
-        let state_key = Pubkey::new_unique();
+        let proposals_state_key = Pubkey::new_unique();
         let mut state_account_lamports = 100;
-        let mut state_account_data = vec![0; 1032]; // Ensure this size is enough for the serialized state + length
+        let mut proposals_state_account_data = vec![0; 1032]; // Ensure this size is enough for the serialized state + length
     
-        let state_account = initialize_state_account(&state_key, &mut state_account_lamports, &mut state_account_data, &program_id);
+        let proposals_state_account = initialize_state_account(&proposals_state_key, &mut state_account_lamports, &mut proposals_state_account_data, &program_id);
     
         // Create and store a test state
-        let mut state = State {
+        let mut state = ProposalsState {
             proposals: HashMap::new(),
-            votes: HashMap::new(),
-            halt: false,
-            insurance_pool: 0,
-            balances: HashMap::new(),
         };
         state.proposals.insert(1, b"Test proposal".to_vec());
-        state.votes.insert(1, vec![(state_key, true)]);
-        state.halt = true;
-        state.insurance_pool = 100;
-        state.balances.insert(state_key, 1000);
     
-        store_state(&state_account, &state).unwrap();
+        store_proposals_state(&proposals_state_account, &state).unwrap();
     
         // Load the state and verify its contents
-        let loaded_state = load_state(&state_account).unwrap();
+        let loaded_state = load_proposals_state(&proposals_state_account).unwrap();
         assert_eq!(state, loaded_state, "State store/load mismatch");
     }
 }
